@@ -151,7 +151,21 @@ fun WeatherScreen(viewModel: WeatherViewModel, onGetHealthPermissions: () -> Uni
                             Spacer(modifier = Modifier.height(16.dp))
                             CompanyWebsiteButton()
                         }
-                        is WeatherState.Error -> Text(text = "Erro: ${weatherState.message}")
+                        is WeatherState.Error -> {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(
+                                    text = weatherState.message,
+                                    color = MaterialTheme.colorScheme.error,
+                                    textAlign = TextAlign.Center
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                weatherState.retryAction?.let { retryAction ->
+                                    OutlinedButton(onClick = { retryAction() }) {
+                                        Text("Tentar Novamente")
+                                    }
+                                }
+                            }
+                        }
                     }
                 } else {
                     HealthPermissionScreen(onGetHealthPermissions, viewModel.healthConnectManager.sdkStatus, context, onSkipHealthPermissions)
