@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.activity.result.contract.ActivityResultContract
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.permission.HealthPermission
+import androidx.health.connect.client.PermissionController
 import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.health.connect.client.records.StepsRecord
 import androidx.health.connect.client.request.AggregateRequest
@@ -11,26 +12,30 @@ import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import java.time.Duration
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 
 class HealthConnectManager(private val context: Context) {
 
-    private val healthConnectClient: HealthConnectClient by lazy {
-        HealthConnectClient.getOrCreate(context)
+    private val healthConnectClient: HealthConnectClient? by lazy {
+        if (HealthConnectClient.getSdkStatus(context) == HealthConnectClient.SDK_AVAILABLE) {
+            HealthConnectClient.getOrCreate(context)
+        } else {
+            null
+        }
     }
 
-    val sdkStatus: Int by lazy {
-        HealthConnectClient.getSdkStatus(context)
-    }
+    val sdkStatus: Int
+        get() = HealthConnectClient.getSdkStatus(context)
 
     val permissionLauncher: ActivityResultContract<Set<String>, Set<String>> by lazy {
-        HealthPermission.createRequestPermissionContract()
+        PermissionController.createRequestPermissionResultContract()
     }
 
     suspend fun hasAllPermissions(): Boolean {
-        val granted = healthConnectClient.permissionController.getGrantedPermissions(PERMISSIONS)
-        return granted.containsAll(PERMISSIONS)
+        val client = healthConnectClient ?: return false
+        return client.permissionController.getGrantedPermissions().containsAll(PERMISSIONS)
     }
 
     fun requestPermissions(): Set<String> {
@@ -38,31 +43,38 @@ class HealthConnectManager(private val context: Context) {
     }
 
     fun readHealthData(): Flow<WearableData> = flow {
-        val now = Instant.now()
-        val yesterday = now.minus(1, ChronoUnit.DAYS)
-        var totalSleepMinutes = 0L
-        var totalSteps = 0L
+        val client = healthConnectClient
+        if (client == null) {
+            emit(WearableData(0, 0))
+            return@flow
+        }
 
         try {
+            val now = Instant.now()
+            val yesterday = now.minus(1, ChronoUnit.DAYS)
+
             // Read sleep sessions
             val sleepRequest = ReadRecordsRequest(
                 recordType = SleepSessionRecord::class,
                 timeRangeFilter = TimeRangeFilter.between(yesterday, now)
             )
-            val sleepSessions = healthConnectClient.readRecords(sleepRequest).records
-            totalSleepMinutes = sleepSessions.sumOf { it.duration?.toMinutes() ?: 0L }
+            val sleepSessions = client.readRecords(sleepRequest).records
+            val totalSleepMinutes = sleepSessions.sumOf {
+                Duration.between(it.startTime, it.endTime).toMinutes()
+            }
 
             // Aggregate total steps
-            val stepsResponse = healthConnectClient.aggregate(
+            val stepsResponse = client.aggregate(
                 AggregateRequest(
                     metrics = setOf(StepsRecord.COUNT_TOTAL),
                     timeRangeFilter = TimeRangeFilter.between(yesterday, now)
                 )
             )
-            totalSteps = stepsResponse[StepsRecord.COUNT_TOTAL] ?: 0L
+            val totalSteps = stepsResponse[StepsRecord.COUNT_TOTAL] ?: 0L
 
-        } finally {
             emit(WearableData(totalSleepMinutes.toInt(), totalSteps.toInt()))
+        } catch (e: Exception) {
+            throw e
         }
     }
 

@@ -8,6 +8,7 @@ import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.Image
@@ -55,15 +56,15 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private val healthPermissionLauncher = registerForActivityResult(
-        viewModel.healthConnectManager.permissionLauncher
-    ) { permissions ->
-        viewModel.updateHealthPermission(permissions.isNotEmpty())
-    }
+    private lateinit var healthPermissionLauncher: ActivityResultLauncher<Set<String>>
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
+
+        healthPermissionLauncher = registerForActivityResult(viewModel.healthConnectManager.permissionLauncher) { permissions ->
+            viewModel.updateHealthPermission(permissions.isNotEmpty())
+        }
 
         setContent {
             SalutAppTheme {
@@ -112,7 +113,7 @@ fun WeatherScreen(viewModel: WeatherViewModel, onGetHealthPermissions: () -> Uni
                     Image(
                         painter = painterResource(id = R.drawable.salut_logo),
                         contentDescription = "Salut Logo",
-                        modifier = Modifier.height(32.dp)
+                        modifier = Modifier.height(50.dp)
                     )
                 },
                 actions = {
@@ -162,16 +163,24 @@ fun HealthPermissionScreen(onGetHealthPermissions: () -> Unit, availability: Int
     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         Text("Conecte seus dados de saúde para dicas personalizadas.", textAlign = TextAlign.Center)
         Spacer(modifier = Modifier.height(16.dp))
-        if (availability == HealthConnectClient.SDK_UNAVAILABLE_PROVIDER_UPDATE_REQUIRED) {
-            Button(onClick = {
-                val intent = Intent(Intent.ACTION_VIEW, "market://details?id=com.google.android.apps.healthdata".toUri())
-                context.startActivity(intent)
-            }) {
-                Text("Instalar Health Connect")
+        when (availability) {
+            HealthConnectClient.SDK_AVAILABLE -> {
+                Button(onClick = onGetHealthPermissions) {
+                    Text("Conectar")
+                }
             }
-        } else {
-            Button(onClick = onGetHealthPermissions) {
-                Text("Conectar")
+            HealthConnectClient.SDK_UNAVAILABLE_PROVIDER_UPDATE_REQUIRED -> {
+                Text("É necessário atualizar o Health Connect para continuar.", textAlign = TextAlign.Center)
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(onClick = {
+                    val intent = Intent(Intent.ACTION_VIEW, "market://details?id=com.google.android.apps.healthdata".toUri())
+                    context.startActivity(intent)
+                }) {
+                    Text("Atualizar")
+                }
+            }
+            else -> {
+                Text("O Health Connect não está disponível neste dispositivo.", textAlign = TextAlign.Center)
             }
         }
     }
@@ -227,11 +236,11 @@ fun WellnessTipCard(weatherData: WeatherData, wearableData: WearableData) {
         !sleptEnough ->
             "Uma noite de sono curta pode afetar sua pele. Considere um momento relaxante com nossas máscaras faciais para revitalizar."
         steps < 5000 && !condition.contains("chuva") ->
-            "Você descansou bem! Que tal aproveitar o dia para dar uma caminhada? Lembre-se do protetor solar."
-        temp > 25 && steps > 10000 ->
-            "Uau, mais de 10.000 passos no calor! Use nosso Glace para um alívio refrescante e ajude na recuperação."
+            "Você descansou bem! Que tal aproveitar o dia para dar uma caminhada? Lembre-se do seu Glace e do protetor solar."
+        temp > 25 && steps > 5000 ->
+            "Uau, mais de 5.000 passos no calor! Use nosso Glace para um alívio refrescante e ajude na recuperação."
         condition.contains("chuva") ->
-            "Dia chuvoso, perfeito para relaxar. Já que você se movimentou bem ontem, que tal uma sessão de yoga em casa?"
+            "Dia chuvoso, perfeito para relaxar. Que tal um spa em casa com uma máscara de argila nanoencapsulada?"
         else ->
             "Você está indo bem! Continue mantendo o equilíbrio entre descanso e atividade. Um ótimo dia para cuidar de si."
     }
@@ -249,7 +258,7 @@ fun WellnessTipCard(weatherData: WeatherData, wearableData: WearableData) {
 fun CompanyWebsiteButton() {
     val context = LocalContext.current
     Button(onClick = {
-        val intent = Intent(Intent.ACTION_VIEW, "https://www.salut.com.br".toUri())
+        val intent = Intent(Intent.ACTION_VIEW, "https://www.salutbio.com.br".toUri())
         context.startActivity(intent)
     }) {
         Text("Visite nosso site")
