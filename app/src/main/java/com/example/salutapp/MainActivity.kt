@@ -70,7 +70,8 @@ class MainActivity : ComponentActivity() {
             SalutAppTheme {
                 WeatherScreen(
                     viewModel = viewModel,
-                    onGetHealthPermissions = { healthPermissionLauncher.launch(viewModel.healthConnectManager.requestPermissions()) }
+                    onGetHealthPermissions = { healthPermissionLauncher.launch(viewModel.healthConnectManager.requestPermissions()) },
+                    onSkipHealthPermissions = { viewModel.skipHealthPermission() }
                 )
             }
         }
@@ -93,9 +94,10 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun WeatherScreen(viewModel: WeatherViewModel, onGetHealthPermissions: () -> Unit) {
+fun WeatherScreen(viewModel: WeatherViewModel, onGetHealthPermissions: () -> Unit, onSkipHealthPermissions: () -> Unit) {
     val hasLocationPermission = viewModel.hasLocationPermission.collectAsState().value
     val healthPermissionsGranted = viewModel.healthPermissionsGranted.collectAsState().value
+    val healthPermissionSkipped = viewModel.healthPermissionSkipped.collectAsState().value
     val weatherState = viewModel.weatherState.collectAsState().value
     val wearableState = viewModel.wearableState.collectAsState().value
     val context = LocalContext.current
@@ -113,7 +115,7 @@ fun WeatherScreen(viewModel: WeatherViewModel, onGetHealthPermissions: () -> Uni
                     Image(
                         painter = painterResource(id = R.drawable.salut_logo),
                         contentDescription = "Salut Logo",
-                        modifier = Modifier.height(50.dp)
+                        modifier = Modifier.height(40.dp) // Ajuste de logo
                     )
                 },
                 actions = {
@@ -133,23 +135,26 @@ fun WeatherScreen(viewModel: WeatherViewModel, onGetHealthPermissions: () -> Uni
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             if (hasLocationPermission) {
-                if (healthPermissionsGranted) {
+                val showMainContent = healthPermissionsGranted || healthPermissionSkipped
+                if (showMainContent) {
                     when (weatherState) {
                         is WeatherState.Loading -> CircularProgressIndicator()
                         is WeatherState.Success -> {
                             val weatherData = weatherState.weatherData
                             WeatherCard(weatherData)
                             Spacer(modifier = Modifier.height(16.dp))
-                            WearableDataCard(wearableData = wearableState)
-                            Spacer(modifier = Modifier.height(16.dp))
-                            WellnessTipCard(weatherData = weatherData, wearableData = wearableState)
+                            if (healthPermissionsGranted) {
+                                WearableDataCard(wearableData = wearableState)
+                                Spacer(modifier = Modifier.height(16.dp))
+                            }
+                            WellnessTipCard(weatherData = weatherData, wearableData = if(healthPermissionsGranted) wearableState else null)
                             Spacer(modifier = Modifier.height(16.dp))
                             CompanyWebsiteButton()
                         }
                         is WeatherState.Error -> Text(text = "Erro: ${weatherState.message}")
                     }
                 } else {
-                    HealthPermissionScreen(onGetHealthPermissions, viewModel.healthConnectManager.sdkStatus, context)
+                    HealthPermissionScreen(onGetHealthPermissions, viewModel.healthConnectManager.sdkStatus, context, onSkipHealthPermissions)
                 }
             } else {
                 Text(text = "Permissão de localização negada.")
@@ -159,8 +164,8 @@ fun WeatherScreen(viewModel: WeatherViewModel, onGetHealthPermissions: () -> Uni
 }
 
 @Composable
-fun HealthPermissionScreen(onGetHealthPermissions: () -> Unit, availability: Int, context: Context) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+fun HealthPermissionScreen(onGetHealthPermissions: () -> Unit, availability: Int, context: Context, onSkip: () -> Unit) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center, modifier = Modifier.fillMaxHeight()) {
         Text("Conecte seus dados de saúde para dicas personalizadas.", textAlign = TextAlign.Center)
         Spacer(modifier = Modifier.height(16.dp))
         when (availability) {
@@ -182,6 +187,10 @@ fun HealthPermissionScreen(onGetHealthPermissions: () -> Unit, availability: Int
             else -> {
                 Text("O Health Connect não está disponível neste dispositivo.", textAlign = TextAlign.Center)
             }
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        TextButton(onClick = onSkip) {
+            Text("Pular por enquanto")
         }
     }
 }
@@ -216,7 +225,7 @@ fun WearableDataCard(wearableData: WearableData) {
                 Text(text = "${sleepHours}h ${sleepMinutes}m")
             }
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(text = "Passos", fontSize = 20.sp)
+                Text(text = "Passos de Hoje", fontSize = 20.sp)
                 Text(text = "${wearableData.steps}")
             }
         }
@@ -224,29 +233,46 @@ fun WearableDataCard(wearableData: WearableData) {
 }
 
 @Composable
-fun WellnessTipCard(weatherData: WeatherData, wearableData: WearableData) {
+fun WellnessTipCard(weatherData: WeatherData, wearableData: WearableData?) {
     val temp = weatherData.current.temp
     val condition = weatherData.current.condition.text.lowercase()
-    val sleptEnough = wearableData.sleepMinutes >= 420 // 7 hours
-    val steps = wearableData.steps
 
-    val tip = when {
-        !sleptEnough && steps < 3000 ->
-            "Você dormiu pouco e se moveu pouco. Considere uma caminhada leve hoje e uma boa noite de sono para recarregar as energias."
-        !sleptEnough ->
-            "Uma noite de sono curta pode afetar sua pele. Considere um momento relaxante com nossas máscaras faciais para revitalizar."
-        steps < 5000 && !condition.contains("chuva") ->
-            "Você descansou bem! Que tal aproveitar o dia para dar uma caminhada? Lembre-se do seu Glace e do protetor solar."
-        temp > 25 && steps > 5000 ->
-            "Uau, mais de 5.000 passos no calor! Use nosso Glace para um alívio refrescante e ajude na recuperação."
-        condition.contains("chuva") ->
-            "Dia chuvoso, perfeito para relaxar. Que tal um spa em casa com uma máscara de argila nanoencapsulada?"
-        else ->
-            "Você está indo bem! Continue mantendo o equilíbrio entre descanso e atividade. Um ótimo dia para cuidar de si."
+    val tip = if (wearableData != null) {
+        // Dicas para quem conectou o wearable
+        val sleptEnough = wearableData.sleepMinutes >= 420 // 7 hours
+        val steps = wearableData.steps
+        when {
+            !sleptEnough && steps < 3000 ->
+                "Parece que a noite foi curta e o dia, mais parado. Que tal um banho relaxante e uma noite de sono reparadora? Para ajudar a revitalizar a pele cansada, experimente nossa máscara de argila Kaolin."
+            !sleptEnough ->
+                "Uma boa noite de sono faz milagres pela pele. Como a sua foi mais curta, que tal dar uma forcinha com a nossa máscara de argila Kaolin? Ela renova e purifica."
+            temp > 25 && steps > 8000 ->
+                "Uau, você está com tudo! Com tanto movimento nesse calor, não se esqueça de se refrescar. Nosso lenço Glace é perfeito para dar aquele alívio imediato e revitalizar a pele."
+            steps < 5000 && !condition.contains("chuva") ->
+                "Você descansou, e o dia está ótimo para um passeio! Movimentar o corpo ajuda a produzir colágeno, mas você pode dar um empurrãozinho extra com nosso estimulador de colágeno à base de óleo de algodão."
+            condition.contains("chuva") ->
+                "Um dia chuvoso é um convite para se cuidar em casa. Já que você descansou bem, que tal um ritual de spa com a máscara de argila Kaolin para purificar e acalmar a pele?"
+            temp < 15 && sleptEnough ->
+                "Você dormiu bem! Com esse friozinho, a pele pode ficar mais seca. É o momento ideal para experimentar nosso estimulador de colágeno e manter a pele hidratada e firme."
+            else ->
+                "Seus dados mostram um ótimo equilíbrio entre descanso e atividade. Continue assim! Cuidar de si é o melhor investimento que você faz."
+        }
+    } else {
+        // Dicas apenas com base no clima
+        when {
+            temp > 25 ->
+                "O calor pede cuidados extras! Para manter a pele fresca e revitalizada ao longo do dia, que tal experimentar nosso lenço refrescante Glace? É um alívio imediato e super prático."
+            temp < 15 ->
+                "Com o tempo mais frio, a pele tende a ressecar. É uma ótima oportunidade para reforçar a hidratação e a nutrição com nosso estimulador de colágeno à base de óleo de algodão."
+            condition.contains("chuva") ->
+                "Dia de chuva combina com um cuidado especial em casa. Transforme seu banheiro em um spa com nossa máscara de argila nanoencapsulada Kaolin. Ela limpa, renova e acalma a pele."
+            else ->
+                "Seja qual for o clima, cuidar de você é sempre uma boa ideia. Lembre-se de beber água e aproveite para fazer algo que te faz bem hoje!"
+        }
     }
 
     Card {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Column(modifier = Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Text(text = "Dica de Bem-Estar", fontSize = 20.sp, textAlign = TextAlign.Center)
             Spacer(modifier = Modifier.height(8.dp))
             Text(text = tip, textAlign = TextAlign.Center)
@@ -270,6 +296,6 @@ fun CompanyWebsiteButton() {
 fun DefaultPreview() {
     SalutAppTheme {
         val context = LocalContext.current
-        WeatherScreen(WeatherViewModel(context.applicationContext as Application), onGetHealthPermissions = {})
+        WeatherScreen(WeatherViewModel(context.applicationContext as Application), onGetHealthPermissions = {}, onSkipHealthPermissions = {})
     }
 }

@@ -38,6 +38,9 @@ class WeatherViewModel(application: Application) : AndroidViewModel(application)
     private val _healthPermissionsGranted = MutableStateFlow(false)
     val healthPermissionsGranted = _healthPermissionsGranted.asStateFlow()
 
+    private val _healthPermissionSkipped = MutableStateFlow(false)
+    val healthPermissionSkipped = _healthPermissionSkipped.asStateFlow()
+
     private var lastLat: Double? = null
     private var lastLon: Double? = null
 
@@ -63,8 +66,13 @@ class WeatherViewModel(application: Application) : AndroidViewModel(application)
     fun updateHealthPermission(granted: Boolean) {
         _healthPermissionsGranted.value = granted
         if (granted) {
+            _healthPermissionSkipped.value = false // Reseta o "skip" se a permissão for concedida
             readHealthData()
         }
+    }
+
+    fun skipHealthPermission() {
+        _healthPermissionSkipped.value = true
     }
 
     fun fetchWeather(lat: Double, lon: Double) {
@@ -95,6 +103,9 @@ class WeatherViewModel(application: Application) : AndroidViewModel(application)
             lastLon?.let { lon ->
                 fetchWeather(lat, lon)
             }
+        }
+        if (_healthPermissionsGranted.value) {
+            readHealthData()
         }
     }
 

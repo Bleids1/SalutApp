@@ -14,6 +14,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import java.time.Duration
 import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
 import java.time.temporal.ChronoUnit
 
 class HealthConnectManager(private val context: Context) {
@@ -34,8 +36,7 @@ class HealthConnectManager(private val context: Context) {
     }
 
     suspend fun hasAllPermissions(): Boolean {
-        val client = healthConnectClient ?: return false
-        return client.permissionController.getGrantedPermissions().containsAll(PERMISSIONS)
+        return healthConnectClient?.permissionController?.getGrantedPermissions()?.containsAll(PERMISSIONS) ?: false
     }
 
     fun requestPermissions(): Set<String> {
@@ -51,30 +52,31 @@ class HealthConnectManager(private val context: Context) {
 
         try {
             val now = Instant.now()
-            val yesterday = now.minus(1, ChronoUnit.DAYS)
+            val startOfDay = LocalDate.now().atStartOfDay(ZoneId.systemDefault()).toInstant()
 
-            // Read sleep sessions
+            // Read sleep sessions from the last 24 hours
             val sleepRequest = ReadRecordsRequest(
                 recordType = SleepSessionRecord::class,
-                timeRangeFilter = TimeRangeFilter.between(yesterday, now)
+                timeRangeFilter = TimeRangeFilter.between(now.minus(1, ChronoUnit.DAYS), now)
             )
             val sleepSessions = client.readRecords(sleepRequest).records
             val totalSleepMinutes = sleepSessions.sumOf {
                 Duration.between(it.startTime, it.endTime).toMinutes()
             }
 
-            // Aggregate total steps
+            // Aggregate total steps for today
             val stepsResponse = client.aggregate(
                 AggregateRequest(
                     metrics = setOf(StepsRecord.COUNT_TOTAL),
-                    timeRangeFilter = TimeRangeFilter.between(yesterday, now)
+                    timeRangeFilter = TimeRangeFilter.between(startOfDay, now)
                 )
             )
             val totalSteps = stepsResponse[StepsRecord.COUNT_TOTAL] ?: 0L
 
             emit(WearableData(totalSleepMinutes.toInt(), totalSteps.toInt()))
         } catch (e: Exception) {
-            throw e
+            // Emit a default value in case of error, you might want to handle this more gracefully
+            emit(WearableData(0, 0))
         }
     }
 
